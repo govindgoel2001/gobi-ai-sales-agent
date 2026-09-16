@@ -97,6 +97,9 @@ export function registerVoiceRoutes(app: Express, server: Server, knowledge: str
       }));
     });
 
+    // `any` on both socket handlers for the same reason as the webhook parser:
+    // these are frames from OpenAI and Twilio whose shape is theirs to change,
+    // and every field is checked before it is used.
     openAiWs.on('message', (data) => {
       const event = safeParse<any>(data);
       if (!event) return;

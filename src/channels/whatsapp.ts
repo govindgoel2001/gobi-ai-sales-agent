@@ -83,6 +83,13 @@ export async function sendWhatsAppText(to: string, body: string): Promise<SendRe
   }
 }
 
+/**
+ * The `any` casts below are deliberate. This payload comes off the wire from
+ * Meta, its shape varies by message type and changes between Graph versions,
+ * and a declared interface would be a claim about someone else's JSON that we
+ * cannot enforce. Every field is optional-chained and every value is checked
+ * before it is used, so the narrowing happens here rather than in a type.
+ */
 export function extractIncomingText(payload: unknown): IncomingMessage | null {
   const value = (payload as any)?.entry?.[0]?.changes?.[0]?.value;
   const message = value?.messages?.[0];
