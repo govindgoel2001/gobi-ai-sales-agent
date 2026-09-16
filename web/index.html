@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Sales Agent</title>
+  <style>
+    :root{font-family:Inter,system-ui,sans-serif;color:#f7f7f7;background:#090909}
+    body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 70% 20%,#411610 0,#130b0a 34%,#080808 68%)}
+    main{width:min(860px,90vw);padding:52px;border:1px solid #3d2622;border-radius:28px;background:#101010d9;box-shadow:0 30px 90px #000}
+    .pill{display:inline-block;padding:8px 12px;border:1px solid #5b332c;border-radius:999px;color:#ff7b68;font-size:12px;letter-spacing:.12em;text-transform:uppercase}
+    h1{font-size:clamp(42px,8vw,86px);line-height:.94;margin:22px 0}
+    .accent{color:#ff5c4a}
+    p{max-width:640px;color:#c9c9c9;font-size:18px;line-height:1.6}
+    .status{display:flex;gap:12px;align-items:center;margin-top:32px;padding:18px 20px;border-radius:18px;background:#171717;border:1px solid #242424}
+    .dot{width:10px;height:10px;border-radius:50%;background:#555}
+    .dot.on{background:#27d17f;box-shadow:0 0 20px #27d17f}
+    .dot.off{background:#ff5c4a;box-shadow:0 0 20px #ff5c4a}
+    .counts{display:flex;gap:14px;flex-wrap:wrap;margin-top:18px}
+    .count{flex:1 1 160px;padding:18px 20px;border-radius:18px;background:#141414;border:1px solid #242424}
+    .count b{display:block;font-size:34px;line-height:1.1}
+    .count span{color:#9a9a9a;font-size:13px;text-transform:uppercase;letter-spacing:.1em}
+  </style>
+</head>
+<body>
+  <main>
+    <span class="pill">24/7 AI Sales Agent</span>
+    <h1>Chat. Qualify.<br><span class="accent">Convert.</span></h1>
+    <p>Your agent is running. It answers WhatsApp messages, remembers every lead, and hands over to you when someone asks for a person.</p>
+    <div class="status"><span class="dot" id="dot"></span><strong>Agent status:</strong>&nbsp;<span id="state">checking</span></div>
+    <div class="counts">
+      <div class="count"><b id="contacts">&ndash;</b><span>Contacts</span></div>
+      <div class="count"><b id="messages">&ndash;</b><span>Messages</span></div>
+      <div class="count"><b id="hot">&ndash;</b><span>Hot leads</span></div>
+    </div>
+  </main>
+  <script>
+    async function refresh() {
+      const dot = document.getElementById('dot');
+      const state = document.getElementById('state');
+      try {
+        const res = await fetch('/api/stats');
+        if (!res.ok) throw new Error(String(res.status));
+        const data = await res.json();
+        for (const key of ['contacts', 'messages', 'hot']) {
+          document.getElementById(key).textContent = data[key];
+        }
+        dot.className = 'dot on';
+        state.textContent = 'online';
+      } catch {
+        dot.className = 'dot off';
+        state.textContent = 'cannot reach the database';
+      }
+    }
+    refresh();
+    setInterval(refresh, 15000);
+  </script>
+</body>
+</html>
