@@ -1,0 +1,51 @@
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+
+const schema = readFileSync('supabase/schema.sql', 'utf8');
+const dbCode = readFileSync('src/db/supabase.ts', 'utf8');
+
+describe('schema', () => {
+  it('has the dedup table the webhook depends on', () => {
+    expect(schema).toContain('create table if not exists public.processed_messages');
+    expect(schema).toContain('message_id text primary key');
+  });
+
+  it('tracks when someone last wrote in, for the 24 hour window', () => {
+    expect(schema).toContain('last_inbound_at');
+  });
+
+  it('records whether an outbound message actually went out', () => {
+    expect(schema).toMatch(/status text not null.*check \(status in \('pending', 'sent', 'failed'\)\)/s);
+  });
+
+  it('allows voice as a channel so calls can be stored', () => {
+    expect(schema).toContain("check (channel in ('whatsapp', 'voice'))");
+  });
+
+  it('leaves row level security on for every table', () => {
+    for (const table of ['contacts', 'messages', 'processed_messages']) {
+      expect(schema).toContain(`alter table public.${table} enable row level security`);
+    }
+  });
+});
+
+describe('database code matches the schema', () => {
+  it('selects last_inbound_at wherever it selects a contact', () => {
+    const selects = dbCode.match(/\.select\(CONTACT_COLUMNS\)/g) ?? [];
+    expect(selects.length).toBeGreaterThan(0);
+    expect(dbCode).toMatch(/const CONTACT_COLUMNS = '[^']*last_inbound_at[^']*'/);
+  });
+
+  it('references only tables that exist', () => {
+    const tables = new Set((dbCode.match(/\.from\('(\w+)'\)/g) ?? []).map((m) => m.slice(7, -2)));
+    expect(tables.size).toBeGreaterThan(0);
+    for (const table of tables) {
+      expect(schema, `code reads ${table} but the schema never creates it`)
+        .toContain(`create table if not exists public.${table}`);
+    }
+  });
+
+  it('claims a message before anything expensive happens', () => {
+    expect(dbCode).toContain('ignoreDuplicates: true');
+  });
+});
