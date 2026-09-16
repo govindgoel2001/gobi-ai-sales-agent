@@ -103,13 +103,23 @@ export async function updateLead(contactId: string, leadScore: number, stage: st
   if (error) throw error;
 }
 
-/** Three counts for the status page. Head-only selects, so no rows cross the wire. */
+/**
+ * Three counts for the status page. Head-only selects, so no rows cross the wire.
+ *
+ * The error checks matter more than they look. supabase-js reports failure in
+ * the result rather than by throwing, so reading `.count ?? 0` straight off an
+ * unreachable database yields three zeros and a green dot, which is the one
+ * thing this page must never do.
+ */
 export async function countsForStatus() {
   const [contacts, messages, hot] = await Promise.all([
     db.from('contacts').select('id', { count: 'exact', head: true }),
     db.from('messages').select('id', { count: 'exact', head: true }),
     db.from('contacts').select('id', { count: 'exact', head: true }).eq('stage', 'hot')
   ]);
+
+  const failure = contacts.error ?? messages.error ?? hot.error;
+  if (failure) throw failure;
 
   return {
     contacts: contacts.count ?? 0,

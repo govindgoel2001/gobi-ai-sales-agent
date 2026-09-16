@@ -48,4 +48,12 @@ describe('database code matches the schema', () => {
   it('claims a message before anything expensive happens', () => {
     expect(dbCode).toContain('ignoreDuplicates: true');
   });
+
+  it('checks the error on the status counts rather than reporting zeros', () => {
+    // supabase-js reports failure in the result rather than by throwing, so
+    // reading .count straight off an unreachable database gives three zeros and
+    // a green dot. That is the one thing the status page must never show.
+    expect(dbCode).toMatch(/const failure = contacts\.error \?\? messages\.error \?\? hot\.error/);
+    expect(dbCode).toContain('if (failure) throw failure');
+  });
 });

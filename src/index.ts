@@ -1,5 +1,6 @@
 import express from 'express';
 import { createServer } from 'node:http';
+import { pathToFileURL } from 'node:url';
 import { config } from './config.js';
 import type {
   Channel, Contact, Direction, MessageStatus, RawBodyRequest, SendResult, StoredMessage
@@ -172,7 +173,11 @@ async function main() {
 
 // Only run the server when started directly, so importing this file in a test
 // does not bind a port.
-if (process.argv[1] && import.meta.url === `file://${process.argv[1].replace(/\\/g, '/')}`) {
+//
+// pathToFileURL rather than building the string by hand: on Windows a file URL
+// is file:///C:/... with three slashes, so a hand-built file://C:/... never
+// matches and the server silently does nothing.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error) => {
     console.error(error instanceof Error ? error.message : error);
     process.exit(1);
