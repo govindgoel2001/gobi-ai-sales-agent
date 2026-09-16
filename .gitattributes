@@ -1,0 +1,5 @@
+# This repo is written on Windows and deployed on Linux. Without this, CRLF
+# reaches the server and breaks anything with a shebang, plus the Dockerfile.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
