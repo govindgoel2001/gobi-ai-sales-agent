@@ -19,9 +19,11 @@ function deps(overrides: Partial<AppDeps> = {}) {
       return expected === header;
     },
     claimMessage: vi.fn(async () => true),
+    markHandled: vi.fn(async () => {}),
+    releaseClaim: vi.fn(async () => {}),
     getOrCreateContact: vi.fn(async () => ({
       id: 'contact-1', phone: '1', name: null, lead_score: 0,
-      stage: 'new', human_handoff: false, last_inbound_at: null
+      stage: 'new', human_handoff: false, handoff_until: null, last_inbound_at: null
     })),
     saveMessage: vi.fn(async () => {}),
     getHistory: vi.fn(async () => []),
@@ -33,6 +35,7 @@ function deps(overrides: Partial<AppDeps> = {}) {
     counts: vi.fn(async () => ({ contacts: 0, messages: 0, hot: 0 })),
     verifyToken: 'verify-me',
     knowledge: 'Haircut is 20.',
+    handoffHours: 24,
     log: { info: vi.fn(), error: vi.fn() },
     ...overrides
   };
@@ -127,7 +130,7 @@ describe('POST /webhooks/whatsapp', () => {
 
     expect(d.generateReply).not.toHaveBeenCalled();
     expect(d.sendText).toHaveBeenCalledOnce();
-    expect(d.updateLead).toHaveBeenCalledWith('contact-1', expect.any(Number), expect.any(String), true);
+    expect(d.updateLead).toHaveBeenCalledWith('contact-1', expect.any(Number), expect.any(String), true, expect.any(String));
   });
 
   it('records a failed send rather than pretending it went out', async () => {
@@ -164,5 +167,78 @@ describe('POST /webhooks/whatsapp', () => {
 
     expect(res.status).toBe(200);
     expect(d.log.error).toHaveBeenCalled();
+  });
+
+  it('gives the claim back when handling fails, so the retry is not swallowed', async () => {
+    // Without this a crash between claiming and replying loses the message for
+    // good: the id is recorded, so Meta's retry is deduped and the customer is
+    // never answered at all.
+    const d = deps({ sendText: vi.fn(async () => { throw new Error('socket hang up'); }) });
+    const { body, signature } = signed(inbound);
+    await post_app(createApp(d), '/webhooks/whatsapp', body, signature);
+    await settle();
+
+    expect(d.releaseClaim).toHaveBeenCalledWith('wamid.IN');
+    expect(d.markHandled).not.toHaveBeenCalled();
+  });
+
+  it('marks a message handled once it is answered', async () => {
+    const d = deps();
+    const { body, signature } = signed(inbound);
+    await post_app(createApp(d), '/webhooks/whatsapp', body, signature);
+    await settle();
+
+    expect(d.markHandled).toHaveBeenCalledWith('wamid.IN');
+    expect(d.releaseClaim).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet while a contact is with a human', async () => {
+    const until = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const d = deps({
+      getOrCreateContact: vi.fn(async () => ({
+        id: 'contact-1', phone: '1', name: null, lead_score: 0,
+        stage: 'new', human_handoff: true, handoff_until: until, last_inbound_at: null
+      }))
+    });
+    const { body, signature } = signed(inbound);
+    await post_app(createApp(d), '/webhooks/whatsapp', body, signature);
+    await settle();
+
+    expect(d.generateReply).not.toHaveBeenCalled();
+    expect(d.sendText).not.toHaveBeenCalled();
+    expect(d.markHandled).toHaveBeenCalledWith('wamid.IN');
+  });
+
+  it('starts answering again once the handoff window has expired', async () => {
+    const expired = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const d = deps({
+      getOrCreateContact: vi.fn(async () => ({
+        id: 'contact-1', phone: '1', name: null, lead_score: 0,
+        stage: 'new', human_handoff: true, handoff_until: expired, last_inbound_at: null
+      }))
+    });
+    const { body, signature } = signed(inbound);
+    await post_app(createApp(d), '/webhooks/whatsapp', body, signature);
+    await settle();
+
+    expect(d.generateReply).toHaveBeenCalledOnce();
+    expect(d.updateLead).toHaveBeenCalledWith('contact-1', expect.any(Number), expect.any(String), false, expired);
+  });
+
+  it('decays a stale score instead of stacking on top of it', async () => {
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    const d = deps({
+      getOrCreateContact: vi.fn(async () => ({
+        id: 'contact-1', phone: '1', name: null, lead_score: 90,
+        stage: 'hot', human_handoff: false, handoff_until: null, last_inbound_at: tenDaysAgo
+      }))
+    });
+    const { body, signature } = signed(inbound);
+    await post_app(createApp(d), '/webhooks/whatsapp', body, signature);
+    await settle();
+
+    const [, score, stage] = d.updateLead.mock.calls[0];
+    expect(score).toBeLessThan(90);
+    expect(stage).not.toBe('hot');
   });
 });

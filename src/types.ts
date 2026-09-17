@@ -17,6 +17,7 @@ export type Contact = {
   lead_score: number;
   stage: string;
   human_handoff: boolean;
+  handoff_until: string | null;
   last_inbound_at: string | null;
 };
 

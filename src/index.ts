@@ -10,11 +10,11 @@ import { describeSendFailure } from './channels/meta-errors.js';
 import { generateSalesReply } from './ai/client.js';
 import { knowledgeFromConfig } from './knowledge/index.js';
 import {
-  claimMessage, countsForStatus, getHistory, getOrCreateContact,
-  saveMessage, touchInbound, updateLead
+  claimMessage, countsForStatus, getHistory, getOrCreateContact, markHandled,
+  releaseClaim, saveMessage, touchInbound, updateLead
 } from './db/supabase.js';
-import { needsHumanHandoff } from './sales/handoff.js';
-import { scoreMessage, stageFromScore } from './sales/lead-score.js';
+import { decideHandoff } from './sales/handoff.js';
+import { decayScore, scoreMessage, stageFromScore } from './sales/lead-score.js';
 import { createLimiter, type LimitDecision } from './limits/rate-limit.js';
 import { registerVoiceRoutes } from './voice/twilio-realtime.js';
 import { registerStatusRoutes } from './web/status.js';
@@ -30,10 +30,12 @@ type Counts = { contacts: number; messages: number; hot: number };
 export type AppDeps = {
   verifySignature(rawBody: Buffer | undefined, header: string | undefined): boolean;
   claimMessage(messageId: string): Promise<boolean>;
+  markHandled(messageId: string): Promise<void>;
+  releaseClaim(messageId: string): Promise<void>;
   getOrCreateContact(phone: string, name?: string | null): Promise<Contact>;
   saveMessage(contactId: string, direction: Direction, content: string, channel?: Channel, status?: MessageStatus): Promise<void>;
   getHistory(contactId: string, limit?: number): Promise<StoredMessage[]>;
-  updateLead(contactId: string, leadScore: number, stage: string, humanHandoff?: boolean): Promise<void>;
+  updateLead(contactId: string, leadScore: number, stage: string, humanHandoff?: boolean, handoffUntil?: string | null): Promise<void>;
   touchInbound(contactId: string): Promise<void>;
   generateReply(history: StoredMessage[], latest: string, knowledge: string): Promise<string>;
   sendText(to: string, body: string): Promise<SendResult>;
@@ -41,6 +43,7 @@ export type AppDeps = {
   counts(): Promise<Counts>;
   verifyToken: string;
   knowledge: string;
+  handoffHours: number;
   log: { info(...args: unknown[]): void; error(...args: unknown[]): void };
 };
 
@@ -106,11 +109,22 @@ async function handle(deps: AppDeps, payload: unknown) {
     await deps.saveMessage(contact.id, 'inbound', incoming.text, 'whatsapp', 'sent');
     await deps.touchInbound(contact.id);
 
-    const leadScore = scoreMessage(incoming.text, contact.lead_score ?? 0);
+    // Decay before adding, so the score reflects interest now rather than the
+    // number of messages this contact has ever sent.
+    const decayed = decayScore(contact.lead_score ?? 0, contact.last_inbound_at);
+    const leadScore = scoreMessage(incoming.text, decayed);
     const stage = stageFromScore(leadScore);
-    const handoff = needsHumanHandoff(incoming.text) || contact.human_handoff;
 
-    await deps.updateLead(contact.id, leadScore, stage, handoff);
+    const handoff = decideHandoff(incoming.text, contact.handoff_until, deps.handoffHours);
+    const handoffUntil = handoff.action === 'announce' ? handoff.until : contact.handoff_until;
+
+    await deps.updateLead(contact.id, leadScore, stage, handoff.action !== 'reply', handoffUntil);
+
+    if (handoff.action === 'stay_quiet') {
+      deps.log.info(`${incoming.from} is with a human until ${contact.handoff_until}. Not replying.`);
+      await deps.markHandled(incoming.id);
+      return;
+    }
 
     const decision = deps.allow(contact.id);
     if (!decision.ok) {
@@ -119,10 +133,11 @@ async function handle(deps: AppDeps, payload: unknown) {
           ? `Daily cap of ${config.DAILY_MESSAGE_CAP} replies reached. Not replying to ${incoming.from}. Raise DAILY_MESSAGE_CAP if this is normal traffic.`
           : `${incoming.from} is sending faster than the per-contact limit allows. Not replying to this one.`
       );
+      await deps.markHandled(incoming.id);
       return;
     }
 
-    const reply = handoff
+    const reply = handoff.action === 'announce'
       ? HANDOFF_REPLY
       : await deps.generateReply(await deps.getHistory(contact.id, 14), incoming.text, deps.knowledge);
 
@@ -133,8 +148,15 @@ async function handle(deps: AppDeps, payload: unknown) {
       await deps.saveMessage(contact.id, 'outbound', reply, 'whatsapp', 'failed');
       deps.log.error(describeSendFailure(result.code, result.detail));
     }
+
+    await deps.markHandled(incoming.id);
   } catch (error) {
     deps.log.error('Failed to process WhatsApp message:', error);
+    // Give the claim back so Meta's next retry can pick it up straight away
+    // instead of waiting out the stale window for a failure we already know of.
+    await deps.releaseClaim(incoming.id).catch((releaseError) => {
+      deps.log.error('Could not release the claim on', incoming.id, releaseError);
+    });
   }
 }
 
@@ -149,6 +171,8 @@ async function main() {
   const app = createApp({
     verifySignature: verifyMetaSignature,
     claimMessage,
+    markHandled,
+    releaseClaim,
     getOrCreateContact,
     saveMessage,
     getHistory,
@@ -160,6 +184,7 @@ async function main() {
     counts: countsForStatus,
     verifyToken: config.WHATSAPP_VERIFY_TOKEN,
     knowledge,
+    handoffHours: config.HANDOFF_HOURS,
     log: { info: console.log, error: console.error }
   });
 

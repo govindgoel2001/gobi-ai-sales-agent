@@ -93,6 +93,22 @@ If a fact is not in those files, the agent says it does not know and offers a
 human. Do not loosen that to make it sound more helpful. An agent that invents a
 delivery date has made a promise to a real customer.
 
+## Handing over to a person
+
+When someone asks for a human, or mentions a refund, complaint or anything
+legal, the agent says once that it is passing the thread over and then goes
+quiet so the human can talk without it interrupting.
+
+That silence expires after `HANDOFF_HOURS`, 24 by default, and the agent starts
+answering again by itself. A handoff that never lifts is a contact the agent is
+permanently dead for, which is worse than one you forgot to pick up.
+
+## Lead scores
+
+Scores go up on buying signals and decay by roughly ten points a day of silence.
+The decay matters: a score that only ever climbs is a message counter, and after
+a month everyone reads as hot and the number stops being worth looking at.
+
 ## Spend guards
 
 `DAILY_MESSAGE_CAP` bounds replies across every conversation in a rolling 24

@@ -22,6 +22,11 @@ export const envSchema = z.object({
   KNOWLEDGE_DIR: z.string().default('knowledge'),
   KNOWLEDGE_MAX_TOKENS: z.coerce.number().int().positive().default(6000),
 
+  // How long the agent stays quiet after handing a contact to a person. It
+  // expires on purpose: a handoff that never lifts is a contact the agent is
+  // permanently dead for.
+  HANDOFF_HOURS: z.coerce.number().positive().default(24),
+
   DAILY_MESSAGE_CAP: z.coerce.number().int().positive().default(500),
   PER_CONTACT_BURST: z.coerce.number().int().positive().default(5),
   PER_CONTACT_REFILL_MS: z.coerce.number().int().positive().default(60_000),

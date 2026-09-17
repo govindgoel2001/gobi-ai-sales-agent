@@ -56,6 +56,12 @@ Look for a log line about the daily cap or the per-contact limit.
 If the daily cap was hit, either `DAILY_MESSAGE_CAP` is too low for your real
 traffic, or something is looping. Check which before raising it.
 
+## It has gone quiet for one contact only
+
+Check `handoff_until` on that row in `contacts`. Someone asked for a person, so
+the agent stepped back. It resumes by itself when that timestamp passes. To
+bring it back now, set the column to null.
+
 ## The reply failed to send
 
 Look for a line mentioning 24 hours. That is error 131047 and it is not a bug.

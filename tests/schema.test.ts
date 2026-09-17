@@ -30,10 +30,25 @@ describe('schema', () => {
 });
 
 describe('database code matches the schema', () => {
-  it('selects last_inbound_at wherever it selects a contact', () => {
+  it('reads every contact column the handler depends on', () => {
     const selects = dbCode.match(/\.select\(CONTACT_COLUMNS\)/g) ?? [];
     expect(selects.length).toBeGreaterThan(0);
-    expect(dbCode).toMatch(/const CONTACT_COLUMNS = '[^']*last_inbound_at[^']*'/);
+
+    const declared = dbCode.match(/const CONTACT_COLUMNS =\s*'([^']*)'/);
+    expect(declared, 'CONTACT_COLUMNS is not declared as a single string').not.toBeNull();
+
+    const columns = declared![1].split(',').map((c) => c.trim());
+    for (const needed of ['last_inbound_at', 'handoff_until', 'lead_score', 'human_handoff']) {
+      expect(columns, `${needed} is never selected, so the handler reads undefined`).toContain(needed);
+      expect(schema, `${needed} is selected but the schema never creates it`).toContain(needed);
+    }
+  });
+
+  it('records when a claim was handled, so a crash does not swallow the message', () => {
+    expect(schema).toContain('handled_at');
+    expect(schema).toContain('claimed_at');
+    expect(dbCode).toContain('export async function markHandled');
+    expect(dbCode).toContain('export async function releaseClaim');
   });
 
   it('references only tables that exist', () => {
